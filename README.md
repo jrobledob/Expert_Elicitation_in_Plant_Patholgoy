@@ -1,1 +1,1 @@
-# Expert_Elicitation_in_Plant_Patholgoy
+# Expert_Elicitation_in_Plant_Pathology
