@@ -1,0 +1,224 @@
+---
+title: "Bayesian Updating for Surveillance – Hypothetical Plant Pathogen"
+author: "Jacobo Robledo"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: FALSE
+    df_print: paged
+  word_document:
+    toc: true
+    toc_depth: '2'
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 7,
+  fig.height = 4
+)
+```
+
+# 1 Problem statement
+
+Regulatory authorities are evaluating whether to expand a quarantine zone to include 100 hectares of non-commercial host plants. The expansion will proceed **if**
+
+$$
+\Pr\bigl(\pi > 0.01 \mid \text{data}\bigr) \;\ge\; 0.80,
+$$
+
+where
+
+-   $\pi$ = true fraction of infected host plants in the surveyed region;
+-   “data’’ = annual surveillance results (positives $k_t$ out of constant samples $n_t = 350$).
+
+# 2 Bayesian model
+
+## 2.1 Likelihood – Binomial sampling
+
+$k_t \mid \pi \;\sim\; \text{Binomial}\!\bigl(n_t,\pi\bigr), \qquad n_t = 350.$
+
+## 2.2 Prior – expert elicitation
+
+Experts provided a prior disease occurrence of:
+
+$$
+\pi \;\sim\; \text{Beta}(\alpha_0 = 1,\; \beta_0 = 999).
+$$
+
+*This reflects one “imaginary” positive and 999 negatives.*
+
+Updating rule (Beta–Binomial conjugacy):
+
+$$
+\boxed{\;
+\alpha_t = \alpha_{t-1} + k_t,\quad
+\beta_t  = \beta_{t-1}  + (n_t - k_t)
+\;}
+$$
+
+## 2.3 Posterior summaries
+
+-   Mean $= \alpha_t / (\alpha_t + \beta_t)$
+-   95 % CrI = $[q_{0.025},\,q_{0.975}]$ with $q_p = \mathrm{qbeta}(p,\alpha_t,\beta_t)$
+-   Tail probability $\Pr(\pi>0.01)=1-\mathrm{pbeta}(0.01,\alpha_t,\beta_t)$
+
+# 3 Surveillance data
+
+```{r data, echo = FALSE}
+posit   <- c(0, 5, 10, 20)
+samples <- rep(350, 4)
+knitr::kable(
+  data.frame(Year = 1:4, Samples = samples, Positives = posit),
+  caption = "Annual surveillance data (350 samples per year)"
+)
+```
+
+# 4 Bayesian update in R
+
+```{r posterior-computation}
+# Prior parameters
+alpha0 <- 1
+beta0  <- 999
+
+# Surveillance data
+samples <- rep(350, 4)
+posit   <- c(0, 5, 10, 20)
+
+# Posterior parameters
+alpha <- c(alpha0, alpha0 + cumsum(posit))
+beta  <- c(beta0,  beta0  + cumsum(samples - posit))
+
+# Posterior summaries
+post_mean <- alpha / (alpha + beta)
+ci_low    <- qbeta(0.025, alpha, beta)
+ci_high   <- qbeta(0.975, alpha, beta)
+prob_gt1  <- 1 - pbeta(0.01, alpha, beta)
+
+results <- data.frame(
+  Stage   = c("Prior", paste("Year", 1:4)),
+  Alpha   = alpha,
+  Beta    = beta,
+  MeanPct = round(100 * post_mean, 3),
+  Low95   = round(100 * ci_low, 3),
+  High95  = round(100 * ci_high, 3),
+  Pr_gt1  = round(100 * prob_gt1, 2)
+)
+
+knitr::kable(
+  results,
+  caption = "Posterior mean, 95 % CrI, and Pr(π > 1 %)"
+)
+```
+
+# 5 Visualising priors and posteriors
+
+```{r plot}
+library(ggplot2)
+library(reshape2)
+
+uf_cols <- c("#0021A5", "#375EA5", "#6E90C1", "#B56648", "#FA4616")
+
+x <- seq(0, 0.03, length.out = 4000)
+dens <- sapply(seq_along(alpha), function(i) dbeta(x, alpha[i], beta[i]))
+colnames(dens) <- results$Stage
+dens_df  <- cbind.data.frame(x, dens)
+dens_long <- melt(dens_df, id.vars = "x",
+                  variable.name = "Stage", value.name = "Density")
+
+ggplot() +
+  geom_area(
+    data = subset(dens_long, x >= 0.01),
+    aes(x, Density, fill = Stage),
+    position = "identity",
+    alpha = 0.25, colour = NA
+  ) +
+  geom_line(
+    data = dens_long,
+    aes(x, Density, colour = Stage),
+    size = 1.1, alpha = 0.8
+  ) +
+  geom_vline(xintercept = 0.01, linetype = "dashed") +
+  annotate("text",
+           x = 0.0105, y = max(dens_long$Density),
+           label = "1 % policy threshold", hjust = 0, vjust = 1.4, size = 3) +
+  scale_colour_manual(values = uf_cols, name = "Distribution") +
+  scale_fill_manual(values = uf_cols,  name = "Shaded area\nπ > 1 %") +
+  labs(title = "Disease prevalence in non-commercial hosts\nPrior and yearly posteriors",
+       x = "Prevalence (fraction of hosts infected)",
+       y = "Density") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "right")
+```
+
+# 6 Interpretation
+
+-   **Year 1** (0 / 350): mean 0.074 %; Pr(π \> 1 %) ≈ 0 %.
+-   **Year 3** (10 / 350 added): mean 0.78 %; Pr(π \> 1 %) ≈ 13 %.
+-   **Year 4** (20 / 350 added): mean 1.50 %; Pr(π \> 1 %) ≈ 99 %. The policy threshold is surpassed; expansion of quarantine is statistically supported.
+
+# 7 Technical appendix
+
+## 7.1 Beta–Binomial conjugacy
+
+$$
+p(\pi \mid k) \;\propto\; \pi^{\alpha_0+k-1}(1-\pi)^{\beta_0+n-k-1}
+\;=\; \text{Beta}\bigl(\alpha_0+k,\; \beta_0+n-k\bigr).
+$$
+
+## 7.2 Exact tail probability
+
+$$
+\Pr(\pi > 0.01) = 1 - F_{\text{Beta}}(0.01;\alpha,\beta)
+               = 1 - \text{pbeta}(0.01,\alpha,\beta).
+$$
+
+
+### Get edidatble figures and tables
+```{r, include = TRUE}
+# Install if needed: install.packages("writexl")
+library(writexl)
+
+write_xlsx(results, path = "./results.xlsx")
+
+# Install if needed: install.packages("officer"); install.packages("rvg")
+library(officer)
+library(rvg)
+
+# Recreate the plot
+plt <- ggplot() +
+  geom_area(
+    data = subset(dens_long, x >= 0.01),
+    aes(x, Density, fill = Stage),
+    position = "identity",
+    alpha = 0.25, colour = NA
+  ) +
+  geom_line(
+    data = dens_long,
+    aes(x, Density, colour = Stage),
+    size = 1.1, alpha = 0.8
+  ) +
+  geom_vline(xintercept = 0.01, linetype = "dashed") +
+  annotate("text",
+           x = 0.0105, y = max(dens_long$Density),
+           label = "1 % policy threshold", hjust = 0, vjust = 1.4, size = 3) +
+  scale_colour_manual(values = uf_cols, name = "Distribution") +
+  scale_fill_manual(values = uf_cols,  name = "Shaded area\nπ > 1 %") +
+  labs(title = "Disease prevalence in non-commercial hosts\nPrior and yearly posteriors",
+       x = "Prevalence (fraction of hosts infected)",
+       y = "Density") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "right")
+
+# Create a PowerPoint slide and insert the plot
+doc <- read_pptx()
+doc <- add_slide(doc, layout = "Title and Content", master = "Office Theme")
+doc <- ph_with(doc, dml(ggobj = plt), location = ph_location_fullsize())
+
+print(doc, target = "plot.pptx")
+
+```
